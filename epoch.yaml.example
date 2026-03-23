@@ -1,0 +1,112 @@
+# epoch configuration example
+# Copy to epoch.yaml and modify as needed
+
+server:
+  # HTTP API bind address
+  bind: ":8086"
+  
+  # Data directory for all databases
+  data_dir: "./data"
+  
+  # Request timeouts
+  read_timeout: "30s"
+  write_timeout: "30s"
+  
+  # Maximum request body size
+  max_body_size: "25MB"
+  
+  # Enable request logging
+  log_requests: true
+
+storage:
+  # Duration of each shard (how data is partitioned by time)
+  shard_duration: "24h"
+  
+  # Default retention duration (0 = infinite)
+  retention: "7d"
+  
+  # Maximum points to buffer before flushing to disk
+  max_buffer_size: 10000
+  
+  # How often to flush buffered points
+  flush_interval: "10s"
+
+wal:
+  # Directory for write-ahead log (defaults to data_dir/wal)
+  # dir: "./data/wal"
+  
+  # Segment size before rolling to new file
+  segment_size: "10MB"
+  
+  # Sync mode: none, every_write, every_n
+  sync_mode: "every_n"
+  
+  # If sync_mode is every_n, sync after this many writes
+  sync_n: 1000
+
+cluster:
+  # Unique identifier for this node
+  node_id: "node-1"
+  
+  # Address for cluster communication
+  bind: ":7946"
+  
+  # Address for RPC communication
+  rpc: ":7947"
+  
+  # Initial peers to connect to (for joining existing cluster)
+  peers: []
+  # peers:
+  #   - "node-2.example.com:7947"
+  #   - "node-3.example.com:7947"
+  
+  # Number of replicas for each piece of data
+  replication_factor: 3
+  
+  # Write consistency level: one, quorum, all
+  write_consistency: "quorum"
+  
+  # Read consistency level: one, quorum, all
+  read_consistency: "one"
+  
+  # Heartbeat interval for peer health checking
+  heartbeat_interval: "1s"
+  
+  # When to consider a peer failed
+  heartbeat_timeout: "5s"
+
+replication:
+  # How often to run anti-entropy sync
+  sync_interval: "1m"
+  
+  # Maximum items per sync batch
+  max_sync_batch_size: 1000
+  
+  # Timeout for repair operations
+  repair_timeout: "30s"
+
+# Retention policies (can also be created via API)
+retention_policies:
+  - name: "default"
+    duration: "7d"
+    shard_duration: "24h"
+    default: true
+    
+  - name: "long_term"
+    duration: "365d"
+    shard_duration: "7d"
+    
+  - name: "short_term"
+    duration: "1h"
+    shard_duration: "10m"
+
+# Continuous queries for downsampling
+continuous_queries:
+  - name: "cpu_hourly"
+    database: "metrics"
+    source_measurement: "cpu"
+    dest_measurement: "cpu_hourly"
+    source_field: "value"
+    aggregate_func: "mean"
+    group_by_interval: "1h"
+    interval: "5m"
