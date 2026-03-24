@@ -485,12 +485,12 @@ func formatFields(fields storage.Fields) string {
 		}
 		sb.WriteString(EscapeFieldKey(k))
 		sb.WriteByte('=')
-		sb.WriteString(formatFieldValue(fields[k]))
+		sb.WriteString(formatLineFieldValue(fields[k]))
 	}
 	return sb.String()
 }
 
-func formatFieldValue(fv storage.FieldValue) string {
+func formatLineFieldValue(fv storage.FieldValue) string {
 	switch fv.Type {
 	case storage.FieldTypeFloat:
 		return strconv.FormatFloat(fv.FloatValue, 'f', -1, 64)

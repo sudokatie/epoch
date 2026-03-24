@@ -256,7 +256,7 @@ func (s *Shell) executeQuery(query string) {
 	}
 
 	// Parse and format response
-	var result QueryResponse
+	var result ShellQueryResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 		return
@@ -296,20 +296,20 @@ Queries:
 `)
 }
 
-// QueryResponse is the response from the server
-type QueryResponse struct {
-	Results []QueryResult `json:"results"`
+// ShellQueryResponse is the response from the server
+type ShellQueryResponse struct {
+	Results []ShellQueryResult `json:"results"`
 }
 
-// QueryResult is a single result
-type QueryResult struct {
+// ShellQueryResult is a single result
+type ShellQueryResult struct {
 	StatementID int            `json:"statement_id"`
-	Series      []ResultSeries `json:"series"`
+	Series      []ShellResultSeries `json:"series"`
 	Error       string         `json:"error,omitempty"`
 }
 
-// ResultSeries is a single series
-type ResultSeries struct {
+// ShellResultSeries is a single series
+type ShellResultSeries struct {
 	Name    string            `json:"name"`
 	Tags    map[string]string `json:"tags,omitempty"`
 	Columns []string          `json:"columns"`
@@ -317,7 +317,7 @@ type ResultSeries struct {
 }
 
 // printTable prints results as a table
-func (s *Shell) printTable(resp QueryResponse) {
+func (s *Shell) printTable(resp ShellQueryResponse) {
 	for _, result := range resp.Results {
 		if result.Error != "" {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
@@ -392,14 +392,14 @@ func (s *Shell) printTable(resp QueryResponse) {
 }
 
 // printJSON prints results as JSON
-func (s *Shell) printJSON(resp QueryResponse) {
+func (s *Shell) printJSON(resp ShellQueryResponse) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(resp)
 }
 
 // printCSV prints results as CSV
-func (s *Shell) printCSV(resp QueryResponse) {
+func (s *Shell) printCSV(resp ShellQueryResponse) {
 	for _, result := range resp.Results {
 		for _, series := range result.Series {
 			// Print header
