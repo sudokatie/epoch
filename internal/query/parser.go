@@ -37,9 +37,434 @@ func (p *Parser) Parse() (Statement, error) {
 	switch p.tok {
 	case SELECT:
 		return p.parseSelect()
+	case CREATE:
+		return p.parseCreate()
+	case DROP:
+		return p.parseDrop()
+	case SHOW:
+		return p.parseShow()
 	default:
 		return nil, fmt.Errorf("unexpected token: %v", p.tok)
 	}
+}
+
+func (p *Parser) parseCreate() (Statement, error) {
+	p.next() // skip CREATE
+
+	switch p.tok {
+	case DATABASE:
+		return p.parseCreateDatabase()
+	case RETENTION:
+		return p.parseCreateRetentionPolicy()
+	case CONTINUOUS:
+		return p.parseCreateContinuousQuery()
+	default:
+		return nil, fmt.Errorf("expected DATABASE, RETENTION, or CONTINUOUS after CREATE, got %v", p.tok)
+	}
+}
+
+func (p *Parser) parseCreateDatabase() (Statement, error) {
+	p.next() // skip DATABASE
+
+	stmt := &CreateDatabaseStatement{}
+
+	// Optional IF NOT EXISTS
+	if p.tok == IF {
+		p.next()
+		if p.tok != NOT {
+			return nil, fmt.Errorf("expected NOT after IF")
+		}
+		p.next()
+		if err := p.expect(EXISTS); err != nil {
+			return nil, err
+		}
+		stmt.IfNotExists = true
+	}
+
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected database name")
+	}
+	stmt.Name = p.lit
+	p.next()
+
+	return stmt, nil
+}
+
+func (p *Parser) parseCreateRetentionPolicy() (Statement, error) {
+	p.next() // skip RETENTION
+	if err := p.expect(POLICY); err != nil {
+		return nil, err
+	}
+
+	stmt := &CreateRetentionPolicyStatement{
+		ReplicationFactor: 1, // default
+	}
+
+	// Optional IF NOT EXISTS
+	if p.tok == IF {
+		p.next()
+		if p.tok != NOT {
+			return nil, fmt.Errorf("expected NOT after IF")
+		}
+		p.next()
+		if err := p.expect(EXISTS); err != nil {
+			return nil, err
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Policy name
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected policy name")
+	}
+	stmt.Name = p.lit
+	p.next()
+
+	// ON database
+	if err := p.expect(ON); err != nil {
+		return nil, err
+	}
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected database name")
+	}
+	stmt.Database = p.lit
+	p.next()
+
+	// Parse clauses in any order
+	for p.tok != EOF && p.tok != SEMICOLON {
+		switch p.tok {
+		case DURATIONKW:
+			p.next()
+			if p.tok != DURATION && p.tok != NUMBER {
+				return nil, fmt.Errorf("expected duration value")
+			}
+			dur, err := ParseDuration(p.lit)
+			if err != nil {
+				return nil, err
+			}
+			stmt.Duration = time.Duration(dur)
+			p.next()
+
+		case REPLICATION:
+			p.next()
+			if p.tok != NUMBER {
+				return nil, fmt.Errorf("expected replication factor")
+			}
+			rf, err := strconv.Atoi(p.lit)
+			if err != nil {
+				return nil, err
+			}
+			stmt.ReplicationFactor = rf
+			p.next()
+
+		case SHARD:
+			p.next()
+			if err := p.expect(DURATIONKW); err != nil {
+				return nil, err
+			}
+			if p.tok != DURATION && p.tok != NUMBER {
+				return nil, fmt.Errorf("expected shard duration")
+			}
+			dur, err := ParseDuration(p.lit)
+			if err != nil {
+				return nil, err
+			}
+			stmt.ShardDuration = time.Duration(dur)
+			p.next()
+
+		case DEFAULT:
+			stmt.Default = true
+			p.next()
+
+		default:
+			return stmt, nil
+		}
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parseCreateContinuousQuery() (Statement, error) {
+	p.next() // skip CONTINUOUS
+	if err := p.expect(QUERY); err != nil {
+		return nil, err
+	}
+
+	stmt := &CreateContinuousQueryStatement{}
+
+	// Query name
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected continuous query name")
+	}
+	stmt.Name = p.lit
+	p.next()
+
+	// ON database
+	if err := p.expect(ON); err != nil {
+		return nil, err
+	}
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected database name")
+	}
+	stmt.Database = p.lit
+	p.next()
+
+	// BEGIN
+	if err := p.expect(BEGIN); err != nil {
+		return nil, err
+	}
+
+	// Parse the SELECT statement
+	selectStmt, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Query = selectStmt
+
+	// END
+	if err := p.expect(END); err != nil {
+		return nil, err
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parseDrop() (Statement, error) {
+	p.next() // skip DROP
+
+	switch p.tok {
+	case DATABASE:
+		return p.parseDropDatabase()
+	case RETENTION:
+		return p.parseDropRetentionPolicy()
+	case CONTINUOUS:
+		return p.parseDropContinuousQuery()
+	case MEASUREMENT:
+		return p.parseDropMeasurement()
+	default:
+		return nil, fmt.Errorf("expected DATABASE, RETENTION, CONTINUOUS, or MEASUREMENT after DROP, got %v", p.tok)
+	}
+}
+
+func (p *Parser) parseDropDatabase() (Statement, error) {
+	p.next() // skip DATABASE
+
+	stmt := &DropDatabaseStatement{}
+
+	// Optional IF EXISTS
+	if p.tok == IF {
+		p.next()
+		if err := p.expect(EXISTS); err != nil {
+			return nil, err
+		}
+		stmt.IfExists = true
+	}
+
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected database name")
+	}
+	stmt.Name = p.lit
+	p.next()
+
+	return stmt, nil
+}
+
+func (p *Parser) parseDropRetentionPolicy() (Statement, error) {
+	p.next() // skip RETENTION
+	if err := p.expect(POLICY); err != nil {
+		return nil, err
+	}
+
+	stmt := &DropRetentionPolicyStatement{}
+
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected policy name")
+	}
+	stmt.Name = p.lit
+	p.next()
+
+	if err := p.expect(ON); err != nil {
+		return nil, err
+	}
+
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected database name")
+	}
+	stmt.Database = p.lit
+	p.next()
+
+	return stmt, nil
+}
+
+func (p *Parser) parseDropContinuousQuery() (Statement, error) {
+	p.next() // skip CONTINUOUS
+	if err := p.expect(QUERY); err != nil {
+		return nil, err
+	}
+
+	stmt := &DropContinuousQueryStatement{}
+
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected continuous query name")
+	}
+	stmt.Name = p.lit
+	p.next()
+
+	if err := p.expect(ON); err != nil {
+		return nil, err
+	}
+
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected database name")
+	}
+	stmt.Database = p.lit
+	p.next()
+
+	return stmt, nil
+}
+
+func (p *Parser) parseDropMeasurement() (Statement, error) {
+	p.next() // skip MEASUREMENT
+
+	stmt := &DropMeasurementStatement{}
+
+	if p.tok != IDENT && p.tok != STRING {
+		return nil, fmt.Errorf("expected measurement name")
+	}
+	stmt.Name = p.lit
+	p.next()
+
+	return stmt, nil
+}
+
+func (p *Parser) parseShow() (Statement, error) {
+	p.next() // skip SHOW
+
+	switch p.tok {
+	case DATABASES:
+		p.next()
+		return &ShowDatabasesStatement{}, nil
+
+	case MEASUREMENTS:
+		return p.parseShowMeasurements()
+
+	case TAG:
+		return p.parseShowTagKeys()
+
+	case FIELD:
+		return p.parseShowFieldKeys()
+
+	case RETENTION:
+		return p.parseShowRetentionPolicies()
+
+	case CONTINUOUS:
+		p.next()
+		if err := p.expect(QUERY); err != nil {
+			// Try QUERIES
+			if p.tok == IDENT && p.lit == "QUERIES" {
+				p.next()
+			}
+		}
+		return &ShowContinuousQueriesStatement{}, nil
+
+	default:
+		return nil, fmt.Errorf("expected DATABASES, MEASUREMENTS, TAG, FIELD, RETENTION, or CONTINUOUS after SHOW, got %v", p.tok)
+	}
+}
+
+func (p *Parser) parseShowMeasurements() (Statement, error) {
+	p.next() // skip MEASUREMENTS
+
+	stmt := &ShowMeasurementsStatement{}
+
+	if p.tok == ON {
+		p.next()
+		if p.tok != IDENT && p.tok != STRING {
+			return nil, fmt.Errorf("expected database name")
+		}
+		stmt.Database = p.lit
+		p.next()
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parseShowTagKeys() (Statement, error) {
+	p.next() // skip TAG
+	if err := p.expect(KEYS); err != nil {
+		return nil, err
+	}
+
+	stmt := &ShowTagKeysStatement{}
+
+	if p.tok == ON {
+		p.next()
+		if p.tok != IDENT && p.tok != STRING {
+			return nil, fmt.Errorf("expected database name")
+		}
+		stmt.Database = p.lit
+		p.next()
+	}
+
+	if p.tok == FROM {
+		p.next()
+		if p.tok != IDENT && p.tok != STRING {
+			return nil, fmt.Errorf("expected measurement name")
+		}
+		stmt.Measurement = p.lit
+		p.next()
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parseShowFieldKeys() (Statement, error) {
+	p.next() // skip FIELD
+	if err := p.expect(KEYS); err != nil {
+		return nil, err
+	}
+
+	stmt := &ShowFieldKeysStatement{}
+
+	if p.tok == ON {
+		p.next()
+		if p.tok != IDENT && p.tok != STRING {
+			return nil, fmt.Errorf("expected database name")
+		}
+		stmt.Database = p.lit
+		p.next()
+	}
+
+	if p.tok == FROM {
+		p.next()
+		if p.tok != IDENT && p.tok != STRING {
+			return nil, fmt.Errorf("expected measurement name")
+		}
+		stmt.Measurement = p.lit
+		p.next()
+	}
+
+	return stmt, nil
+}
+
+func (p *Parser) parseShowRetentionPolicies() (Statement, error) {
+	p.next() // skip RETENTION
+	if err := p.expect(POLICIES); err != nil {
+		return nil, err
+	}
+
+	stmt := &ShowRetentionPoliciesStatement{}
+
+	if p.tok == ON {
+		p.next()
+		if p.tok != IDENT && p.tok != STRING {
+			return nil, fmt.Errorf("expected database name")
+		}
+		stmt.Database = p.lit
+		p.next()
+	}
+
+	return stmt, nil
 }
 
 func (p *Parser) parseSelect() (*SelectStatement, error) {

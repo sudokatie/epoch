@@ -3,7 +3,6 @@ package cluster
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 )
@@ -479,46 +478,119 @@ func (s *RaftState) GetShardNodes(shardID uint64) []string {
 	return s.ShardAssignments[shardID]
 }
 
-// RaftConsensus provides the consensus interface
-type RaftConsensus struct {
+// ApplyAddNode applies an add node command (public wrapper)
+func (s *RaftState) ApplyAddNode(node *NodeInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Nodes[node.ID] = node
+	return nil
+}
+
+// ApplyRemoveNode applies a remove node command (public wrapper)
+func (s *RaftState) ApplyRemoveNode(nodeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Nodes, nodeID)
+	return nil
+}
+
+// ApplyCreateDatabase applies a create database command (public wrapper)
+func (s *RaftState) ApplyCreateDatabase(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.Databases[name]; exists {
+		return fmt.Errorf("database %s already exists", name)
+	}
+	s.Databases[name] = &DatabaseMeta{
+		Name:              name,
+		RetentionPolicies: make(map[string]*RPMeta),
+		CreatedAt:         time.Now(),
+	}
+	return nil
+}
+
+// ApplyDropDatabase applies a drop database command (public wrapper)
+func (s *RaftState) ApplyDropDatabase(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Databases, name)
+	return nil
+}
+
+// ApplyCreateRetentionPolicy applies a create RP command (public wrapper)
+func (s *RaftState) ApplyCreateRetentionPolicy(database string, policy *RPMeta) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	db, exists := s.Databases[database]
+	if !exists {
+		return fmt.Errorf("database %s not found", database)
+	}
+	db.RetentionPolicies[policy.Name] = policy
+	if policy.Default {
+		db.DefaultRP = policy.Name
+	}
+	return nil
+}
+
+// ApplyDropRetentionPolicy applies a drop RP command (public wrapper)
+func (s *RaftState) ApplyDropRetentionPolicy(database, policyName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	db, exists := s.Databases[database]
+	if !exists {
+		return fmt.Errorf("database %s not found", database)
+	}
+	delete(db.RetentionPolicies, policyName)
+	return nil
+}
+
+// ApplyAssignShard applies a shard assignment command (public wrapper)
+func (s *RaftState) ApplyAssignShard(shardID uint64, nodeIDs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ShardAssignments[shardID] = nodeIDs
+	return nil
+}
+
+// SimpleRaftConsensus provides a simple consensus interface for testing/standalone
+type SimpleRaftConsensus struct {
 	mu sync.RWMutex
 
 	state    *RaftState
 	isLeader bool
 	leaderID string
 
-	// Log for commands (simplified - in production use hashicorp/raft)
+	// Log for commands
 	log []RaftCommand
 
 	// Callbacks
 	onLeaderChange func(isLeader bool)
 }
 
-// NewRaftConsensus creates a new Raft consensus instance
-func NewRaftConsensus(state *RaftState) *RaftConsensus {
-	return &RaftConsensus{
+// NewSimpleRaftConsensus creates a new simple Raft consensus instance
+func NewSimpleRaftConsensus(state *RaftState) *SimpleRaftConsensus {
+	return &SimpleRaftConsensus{
 		state: state,
 		log:   make([]RaftCommand, 0),
 	}
 }
 
 // IsLeader returns whether this node is the leader
-func (r *RaftConsensus) IsLeader() bool {
+func (r *SimpleRaftConsensus) IsLeader() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.isLeader
 }
 
 // LeaderID returns the current leader's ID
-func (r *RaftConsensus) LeaderID() string {
+func (r *SimpleRaftConsensus) LeaderID() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.leaderID
 }
 
 // Submit submits a command for consensus
-// Returns error if not leader or consensus fails
-func (r *RaftConsensus) Submit(cmd *RaftCommand) error {
+func (r *SimpleRaftConsensus) Submit(cmd *RaftCommand) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -526,24 +598,21 @@ func (r *RaftConsensus) Submit(cmd *RaftCommand) error {
 		return fmt.Errorf("not leader, leader is %s", r.leaderID)
 	}
 
-	// Apply locally
 	if err := r.state.Apply(cmd); err != nil {
 		return err
 	}
 
-	// Append to log (in production, this would replicate to followers)
 	r.log = append(r.log, *cmd)
-
 	return nil
 }
 
 // State returns the replicated state
-func (r *RaftConsensus) State() *RaftState {
+func (r *SimpleRaftConsensus) State() *RaftState {
 	return r.state
 }
 
-// BecomeLeader makes this node the leader (for testing/standalone)
-func (r *RaftConsensus) BecomeLeader(nodeID string) {
+// BecomeLeader makes this node the leader
+func (r *SimpleRaftConsensus) BecomeLeader(nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -555,8 +624,8 @@ func (r *RaftConsensus) BecomeLeader(nodeID string) {
 	}
 }
 
-// SetLeader sets the leader (for followers)
-func (r *RaftConsensus) SetLeader(leaderID string) {
+// SetLeader sets the leader
+func (r *SimpleRaftConsensus) SetLeader(leaderID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -569,14 +638,14 @@ func (r *RaftConsensus) SetLeader(leaderID string) {
 }
 
 // OnLeaderChange sets the leader change callback
-func (r *RaftConsensus) OnLeaderChange(fn func(isLeader bool)) {
+func (r *SimpleRaftConsensus) OnLeaderChange(fn func(isLeader bool)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.onLeaderChange = fn
 }
 
-// Snapshot creates a snapshot for persistence
-func (r *RaftConsensus) Snapshot(w io.Writer) error {
+// Snapshot writes state snapshot to writer
+func (r *SimpleRaftConsensus) Snapshot(w interface{ Write([]byte) (int, error) }) error {
 	data, err := r.state.Snapshot()
 	if err != nil {
 		return err
@@ -585,11 +654,12 @@ func (r *RaftConsensus) Snapshot(w io.Writer) error {
 	return err
 }
 
-// Restore restores from a snapshot
-func (r *RaftConsensus) Restore(rd io.Reader) error {
-	data, err := io.ReadAll(rd)
-	if err != nil {
+// Restore restores state from reader
+func (r *SimpleRaftConsensus) Restore(rd interface{ Read([]byte) (int, error) }) error {
+	data := make([]byte, 1024*1024) // 1MB buffer
+	n, err := rd.Read(data)
+	if err != nil && n == 0 {
 		return err
 	}
-	return r.state.Restore(data)
+	return r.state.Restore(data[:n])
 }

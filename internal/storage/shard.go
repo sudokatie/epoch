@@ -430,3 +430,24 @@ func (s *Shard) Stats() (bufferedPoints int, columnCount int, walSegments int) {
 
 	return
 }
+
+// Size returns the total size of the shard on disk in bytes
+func (s *Shard) Size() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var totalSize int64
+
+	// Walk the shard directory and sum file sizes
+	filepath.Walk(s.dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+
+	return totalSize
+}

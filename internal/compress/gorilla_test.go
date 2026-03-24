@@ -471,3 +471,215 @@ func BenchmarkDecompressFloats(b *testing.B) {
 		DecompressFloats(compressed)
 	}
 }
+
+func TestBitWriterBitCount(t *testing.T) {
+	w := NewBitWriter()
+	
+	if w.BitCount() != 0 {
+		t.Errorf("empty writer bit count = %d, want 0", w.BitCount())
+	}
+	
+	w.WriteBit(true)
+	if w.BitCount() != 1 {
+		t.Errorf("after 1 bit, count = %d, want 1", w.BitCount())
+	}
+	
+	w.WriteBits(0xFF, 8)
+	if w.BitCount() != 9 {
+		t.Errorf("after 9 bits, count = %d, want 9", w.BitCount())
+	}
+	
+	// Fill to complete byte
+	w.WriteBits(0x7F, 7)
+	if w.BitCount() != 16 {
+		t.Errorf("after 16 bits, count = %d, want 16", w.BitCount())
+	}
+}
+
+func TestBitReaderBitsRemaining(t *testing.T) {
+	data := []byte{0xFF, 0xAA}
+	r := NewBitReader(data)
+	
+	if r.BitsRemaining() != 16 {
+		t.Errorf("initial bits remaining = %d, want 16", r.BitsRemaining())
+	}
+	
+	r.ReadBit()
+	if r.BitsRemaining() != 15 {
+		t.Errorf("after 1 bit, remaining = %d, want 15", r.BitsRemaining())
+	}
+	
+	r.ReadBits(8)
+	if r.BitsRemaining() != 7 {
+		t.Errorf("after 9 bits, remaining = %d, want 7", r.BitsRemaining())
+	}
+}
+
+func TestBitReaderReadBytes(t *testing.T) {
+	data := []byte{0x12, 0x34, 0x56, 0x78}
+	r := NewBitReader(data)
+	
+	bytes, err := r.ReadBytes(2)
+	if err != nil {
+		t.Fatalf("ReadBytes error: %v", err)
+	}
+	if len(bytes) != 2 || bytes[0] != 0x12 || bytes[1] != 0x34 {
+		t.Errorf("ReadBytes got %v, want [0x12, 0x34]", bytes)
+	}
+	
+	bytes, err = r.ReadBytes(2)
+	if err != nil {
+		t.Fatalf("ReadBytes error: %v", err)
+	}
+	if len(bytes) != 2 || bytes[0] != 0x56 || bytes[1] != 0x78 {
+		t.Errorf("ReadBytes got %v, want [0x56, 0x78]", bytes)
+	}
+	
+	// Read past end
+	_, err = r.ReadBytes(1)
+	if err == nil {
+		t.Error("expected error reading past end")
+	}
+}
+
+func TestBitReaderDecodeInt64(t *testing.T) {
+	w := NewBitWriter()
+	val := int64(-12345)
+	
+	EncodeInt64(w, val)
+	
+	r := NewBitReader(w.Bytes())
+	decoded, err := DecodeInt64(r)
+	if err != nil {
+		t.Fatalf("DecodeInt64 error: %v", err)
+	}
+	if decoded != val {
+		t.Errorf("DecodeInt64 = %d, want %d", decoded, val)
+	}
+}
+
+func TestBitReaderDecodeUint64(t *testing.T) {
+	w := NewBitWriter()
+	val := uint64(123456789)
+	
+	EncodeUint64(w, val)
+	
+	r := NewBitReader(w.Bytes())
+	decoded, err := DecodeUint64(r)
+	if err != nil {
+		t.Fatalf("DecodeUint64 error: %v", err)
+	}
+	if decoded != val {
+		t.Errorf("DecodeUint64 = %d, want %d", decoded, val)
+	}
+}
+
+func TestCompressTimestampsVariousPatterns(t *testing.T) {
+	// Test with decreasing timestamps (negative deltas)
+	decreasing := []int64{1000000000, 999999000, 999998000, 999997000}
+	compressed := CompressTimestamps(decreasing)
+	decompressed, err := DecompressTimestamps(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range decreasing {
+		if decompressed[i] != v {
+			t.Errorf("decreasing[%d] = %d, want %d", i, decompressed[i], v)
+		}
+	}
+	
+	// Test with varying deltas
+	varying := []int64{1000000, 1001000, 1001500, 1003000, 1003100}
+	compressed = CompressTimestamps(varying)
+	decompressed, err = DecompressTimestamps(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range varying {
+		if decompressed[i] != v {
+			t.Errorf("varying[%d] = %d, want %d", i, decompressed[i], v)
+		}
+	}
+	
+	// Test with large deltas
+	large := []int64{0, 1000000000000, 2000000000000, 3000000000000}
+	compressed = CompressTimestamps(large)
+	decompressed, err = DecompressTimestamps(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range large {
+		if decompressed[i] != v {
+			t.Errorf("large[%d] = %d, want %d", i, decompressed[i], v)
+		}
+	}
+}
+
+func TestCompressIntegersVariousPatterns(t *testing.T) {
+	// Test with negative integers
+	negative := []int64{-100, -200, -300, -400}
+	compressed := CompressIntegers(negative)
+	decompressed, err := DecompressIntegers(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range negative {
+		if decompressed[i] != v {
+			t.Errorf("negative[%d] = %d, want %d", i, decompressed[i], v)
+		}
+	}
+	
+	// Test with mixed positive and negative
+	mixed := []int64{100, -50, 200, -100, 0}
+	compressed = CompressIntegers(mixed)
+	decompressed, err = DecompressIntegers(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range mixed {
+		if decompressed[i] != v {
+			t.Errorf("mixed[%d] = %d, want %d", i, decompressed[i], v)
+		}
+	}
+	
+	// Test with large integers
+	large := []int64{math.MaxInt64 / 2, math.MinInt64 / 2, 0, 1, -1}
+	compressed = CompressIntegers(large)
+	decompressed, err = DecompressIntegers(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range large {
+		if decompressed[i] != v {
+			t.Errorf("large[%d] = %d, want %d", i, decompressed[i], v)
+		}
+	}
+}
+
+func TestDecompressFloatsEdgeCases(t *testing.T) {
+	// Test with special float values
+	special := []float64{0.0, -0.0, math.Inf(1), math.Inf(-1)}
+	compressed := CompressFloats(special)
+	decompressed, err := DecompressFloats(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range special {
+		if decompressed[i] != v && !(math.IsInf(v, 0) && math.IsInf(decompressed[i], 0)) {
+			t.Errorf("special[%d] = %v, want %v", i, decompressed[i], v)
+		}
+	}
+	
+	// Test with very small values
+	small := []float64{1e-300, 1e-200, 1e-100}
+	compressed = CompressFloats(small)
+	decompressed, err = DecompressFloats(compressed)
+	if err != nil {
+		t.Fatalf("decompress error: %v", err)
+	}
+	for i, v := range small {
+		if decompressed[i] != v {
+			t.Errorf("small[%d] = %v, want %v", i, decompressed[i], v)
+		}
+	}
+}

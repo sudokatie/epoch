@@ -378,3 +378,168 @@ func BenchmarkParse(b *testing.B) {
 		ParseQuery(query)
 	}
 }
+
+func TestParseMulExpressions(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"SELECT a * b FROM m", "SELECT (a * b) FROM m"},
+		{"SELECT a / b FROM m", "SELECT (a / b) FROM m"},
+		{"SELECT a * b / c FROM m", "SELECT ((a * b) / c) FROM m"},
+		{"SELECT 2 * value FROM m", "SELECT (2 * value) FROM m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			stmt, err := ParseQuery(tt.input)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q) error: %v", tt.input, err)
+			}
+			_ = stmt // Just verify it parses
+		})
+	}
+}
+
+func TestParseUnaryExpressions(t *testing.T) {
+	tests := []struct {
+		input string
+	}{
+		{"SELECT -value FROM m"},
+		{"SELECT -5 FROM m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			stmt, err := ParseQuery(tt.input)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q) error: %v", tt.input, err)
+			}
+			_ = stmt
+		})
+	}
+}
+
+func TestParseShowVariants(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"SHOW DATABASES", false},
+		{"SHOW MEASUREMENTS", false},
+		{"SHOW MEASUREMENTS ON mydb", false},
+		{"SHOW TAG KEYS", false},
+		{"SHOW TAG KEYS FROM cpu", false},
+		{"SHOW TAG KEYS ON mydb FROM cpu", false},
+		{"SHOW FIELD KEYS", false},
+		{"SHOW FIELD KEYS FROM cpu", false},
+		{"SHOW RETENTION POLICIES ON mydb", false},
+		{"SHOW CONTINUOUS QUERIES", false},
+		{"SHOW INVALID", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := ParseQuery(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseQuery(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParsePrimaryExpressions(t *testing.T) {
+	tests := []struct {
+		input string
+	}{
+		{"SELECT * FROM m"},
+		{"SELECT true FROM m"},
+		{"SELECT false FROM m"},
+		{"SELECT 'string' FROM m"},
+		{"SELECT 42 FROM m"},
+		{"SELECT 3.14 FROM m"},
+		{"SELECT 1h FROM m"},
+		{"SELECT now() FROM m"},
+		{"SELECT (value + 1) FROM m"},
+		{"SELECT count(*) FROM m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			stmt, err := ParseQuery(tt.input)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q) error: %v", tt.input, err)
+			}
+			_ = stmt
+		})
+	}
+}
+
+func TestParseCreateRetentionPolicyFull(t *testing.T) {
+	tests := []struct {
+		input string
+	}{
+		{"CREATE RETENTION POLICY rp ON db DURATION 7d REPLICATION 1"},
+		{"CREATE RETENTION POLICY IF NOT EXISTS rp ON db DURATION 7d REPLICATION 2"},
+		{"CREATE RETENTION POLICY rp ON db DURATION 30d REPLICATION 1 SHARD DURATION 1d"},
+		{"CREATE RETENTION POLICY rp ON db DURATION 30d REPLICATION 1 DEFAULT"},
+		{"CREATE RETENTION POLICY rp ON db DURATION 7d REPLICATION 1 SHARD DURATION 1d DEFAULT"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := ParseQuery(tt.input)
+			if err != nil {
+				t.Errorf("ParseQuery(%q) error: %v", tt.input, err)
+			}
+		})
+	}
+}
+
+func TestParseCreateContinuousQuery(t *testing.T) {
+	query := `CREATE CONTINUOUS QUERY cq ON mydb BEGIN SELECT mean(value) FROM cpu GROUP BY time(1h) END`
+	_, err := ParseQuery(query)
+	if err != nil {
+		t.Errorf("ParseQuery error: %v", err)
+	}
+}
+
+func TestParseGroupByComplex(t *testing.T) {
+	tests := []struct {
+		input string
+	}{
+		{"SELECT mean(value) FROM cpu GROUP BY host"},
+		{"SELECT mean(value) FROM cpu GROUP BY time(1h)"},
+		{"SELECT mean(value) FROM cpu GROUP BY host, time(5m)"},
+		{"SELECT mean(value) FROM cpu GROUP BY time(1h), host, region"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := ParseQuery(tt.input)
+			if err != nil {
+				t.Errorf("ParseQuery(%q) error: %v", tt.input, err)
+			}
+		})
+	}
+}
+
+func TestParseOrderByVariants(t *testing.T) {
+	tests := []struct {
+		input string
+	}{
+		{"SELECT * FROM cpu ORDER BY time"},
+		{"SELECT * FROM cpu ORDER BY time ASC"},
+		{"SELECT * FROM cpu ORDER BY time DESC"},
+		{"SELECT * FROM cpu ORDER BY value DESC"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := ParseQuery(tt.input)
+			if err != nil {
+				t.Errorf("ParseQuery(%q) error: %v", tt.input, err)
+			}
+		})
+	}
+}

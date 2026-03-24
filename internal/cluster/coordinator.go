@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"sync"
 	"time"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // ConsistencyLevel defines write/read consistency requirements
@@ -39,6 +40,7 @@ type Coordinator struct {
 	mu sync.RWMutex
 
 	node              *Node
+	hashRing          *HashRing
 	replicationFactor int
 	writeConsistency  ConsistencyLevel
 	readConsistency   ConsistencyLevel
@@ -78,14 +80,42 @@ func NewCoordinator(node *Node, config CoordinatorConfig) *Coordinator {
 		config.ReadTimeout = 10 * time.Second
 	}
 
+	// Create hash ring with configured replication factor
+	hashRing := NewHashRing(HashRingConfig{
+		VirtualNodes:      150,
+		ReplicationFactor: config.ReplicationFactor,
+	})
+
 	return &Coordinator{
 		node:              node,
+		hashRing:          hashRing,
 		replicationFactor: config.ReplicationFactor,
 		writeConsistency:  config.WriteConsistency,
 		readConsistency:   config.ReadConsistency,
 		writeTimeout:      config.WriteTimeout,
 		readTimeout:       config.ReadTimeout,
 	}
+}
+
+// AddNode adds a node to the hash ring
+func (c *Coordinator) AddNode(nodeID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hashRing.AddNode(nodeID)
+}
+
+// RemoveNode removes a node from the hash ring
+func (c *Coordinator) RemoveNode(nodeID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hashRing.RemoveNode(nodeID)
+}
+
+// GetNodesForKey returns the nodes responsible for a key using consistent hashing
+func (c *Coordinator) GetNodesForKey(key string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.hashRing.GetNodes(key, c.replicationFactor)
 }
 
 // WriteRequest represents a distributed write request
@@ -108,8 +138,8 @@ type WriteResponse struct {
 // Write distributes a write to replicas
 func (c *Coordinator) Write(ctx context.Context, req *WriteRequest) (*WriteResponse, error) {
 	// Find responsible nodes using consistent hashing
-	key := c.hashKey(req.Database, req.Measurement, req.Tags)
-	nodes := c.getReplicaNodes(key)
+	keyStr := c.hashKey(req.Database, req.Measurement, req.Tags)
+	nodes := c.getReplicaNodes(keyStr)
 
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("no nodes available for write")
@@ -314,47 +344,46 @@ func (c *Coordinator) Query(ctx context.Context, req *QueryRequest) (*QueryRespo
 	}, nil
 }
 
-// hashKey generates a hash for routing to nodes
-func (c *Coordinator) hashKey(database, measurement string, tags map[string]string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(database))
-	h.Write([]byte(measurement))
+// hashKey generates a consistent hash key string for routing
+func (c *Coordinator) hashKey(database, measurement string, tags map[string]string) string {
+	// Build a deterministic key string
+	key := database + ":" + measurement
 	for k, v := range tags {
-		h.Write([]byte(k))
-		h.Write([]byte(v))
+		key += ":" + k + "=" + v
 	}
-	return h.Sum64()
+	return key
 }
 
-// getReplicaNodes returns the nodes responsible for a key
-func (c *Coordinator) getReplicaNodes(key uint64) []*Peer {
-	peers := c.node.Peers()
+// hashKeyUint64 generates a hash for internal use
+func (c *Coordinator) hashKeyUint64(database, measurement string, tags map[string]string) uint64 {
+	key := c.hashKey(database, measurement, tags)
+	return xxhash.Sum64String(key)
+}
 
-	// Filter to data nodes
-	dataNodes := make([]NodeInfo, 0)
-	for _, p := range peers {
-		if p.Type == NodeTypeData && p.State == NodeStateReady {
-			dataNodes = append(dataNodes, p)
+// getReplicaNodes returns the nodes responsible for a key using consistent hashing
+func (c *Coordinator) getReplicaNodes(keyStr string) []*Peer {
+	c.mu.RLock()
+	nodeIDs := c.hashRing.GetNodes(keyStr, c.replicationFactor)
+	c.mu.RUnlock()
+
+	if len(nodeIDs) == 0 {
+		// Fall back to getting all ready data nodes
+		peers := c.node.Peers()
+		result := make([]*Peer, 0)
+		for _, p := range peers {
+			if p.Type == NodeTypeData && p.State == NodeStateReady {
+				if peer, ok := c.node.GetPeer(p.ID); ok {
+					result = append(result, peer)
+				}
+			}
 		}
+		return result
 	}
 
-	if len(dataNodes) == 0 {
-		return nil
-	}
-
-	// Use consistent hashing to select primary
-	primaryIdx := int(key % uint64(len(dataNodes)))
-
-	// Select replica nodes
-	numReplicas := c.replicationFactor
-	if numReplicas > len(dataNodes) {
-		numReplicas = len(dataNodes)
-	}
-
-	result := make([]*Peer, 0, numReplicas)
-	for i := 0; i < numReplicas; i++ {
-		idx := (primaryIdx + i) % len(dataNodes)
-		if peer, ok := c.node.GetPeer(dataNodes[idx].ID); ok {
+	// Get peer connections for the selected nodes
+	result := make([]*Peer, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		if peer, ok := c.node.GetPeer(nodeID); ok {
 			result = append(result, peer)
 		}
 	}

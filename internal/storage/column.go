@@ -470,6 +470,33 @@ func (cf *ColumnFile) Stats() (pointCount uint64, blockCount uint32, minTime, ma
 	return cf.header.PointCount, cf.header.BlockCount, cf.header.MinTime, cf.header.MaxTime
 }
 
+// Block represents a data block with timestamps and values
+type Block struct {
+	Timestamps []int64
+	Values     interface{}
+}
+
+// ReadAll reads all blocks from the column file
+func (cf *ColumnFile) ReadAll() ([]Block, error) {
+	cf.mu.RLock()
+	defer cf.mu.RUnlock()
+
+	var blocks []Block
+	for i := 0; i < int(cf.header.BlockCount); i++ {
+		ts, vals, err := cf.readBlockUnlocked(i)
+		if err != nil {
+			return nil, fmt.Errorf("read block %d: %w", i, err)
+		}
+		blocks = append(blocks, Block{Timestamps: ts, Values: vals})
+	}
+	return blocks, nil
+}
+
+// WriteBlock writes a pre-formed block to the column file
+func (cf *ColumnFile) WriteBlock(block Block) error {
+	return cf.AppendBlock(block.Timestamps, block.Values)
+}
+
 // String compression helpers
 
 func compressStrings(values []string) []byte {

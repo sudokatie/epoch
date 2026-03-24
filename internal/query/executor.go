@@ -212,9 +212,14 @@ func (e *Executor) executeScan(ctx context.Context, database string, scan *ScanN
 		stats.PointsScanned += int64(len(rs.Values))
 	}
 
-	// Check limits
+	// Check series limit
 	if e.config.MaxSeriesPerQuery > 0 && len(series) > e.config.MaxSeriesPerQuery {
 		return nil, stats, fmt.Errorf("query returned too many series: %d > %d", len(series), e.config.MaxSeriesPerQuery)
+	}
+
+	// Check points limit
+	if e.config.MaxPointsPerQuery > 0 && stats.PointsScanned > e.config.MaxPointsPerQuery {
+		return nil, stats, fmt.Errorf("query scanned too many points: %d > %d", stats.PointsScanned, e.config.MaxPointsPerQuery)
 	}
 
 	stats.PointsReturned = stats.PointsScanned

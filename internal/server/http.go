@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sudokatie/epoch/internal/metrics"
 	"github.com/sudokatie/epoch/internal/query"
 	"github.com/sudokatie/epoch/internal/storage"
 )
@@ -29,12 +30,16 @@ type Server struct {
 
 // Config holds server configuration
 type Config struct {
-	// BindAddress is the address to listen on (default ":8086")
+	// Addr is the address to listen on (default ":8086")
+	Addr string
+	// BindAddress is an alias for Addr (deprecated, use Addr)
 	BindAddress string
 	// ReadTimeout is the maximum duration for reading the entire request
 	ReadTimeout time.Duration
 	// WriteTimeout is the maximum duration before timing out writes
 	WriteTimeout time.Duration
+	// QueryTimeout is the maximum duration for query execution
+	QueryTimeout time.Duration
 	// MaxBodySize is the maximum allowed request body size in bytes
 	MaxBodySize int64
 	// AuthEnabled enables authentication
@@ -46,13 +51,51 @@ type Config struct {
 // DefaultConfig returns sensible defaults
 func DefaultConfig() Config {
 	return Config{
+		Addr:         ":8086",
 		BindAddress:  ":8086",
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
+		QueryTimeout: 30 * time.Second,
 		MaxBodySize:  25 * 1024 * 1024, // 25MB
 		AuthEnabled:  false,
 		LogRequests:  true,
 	}
+}
+
+// New creates a new HTTP server with the given configuration and storage engine
+func New(config Config, engine *storage.Engine) (*Server, error) {
+	// Use Addr if set, otherwise fall back to BindAddress
+	addr := config.Addr
+	if addr == "" {
+		addr = config.BindAddress
+	}
+	if addr == "" {
+		addr = ":8086"
+	}
+	config.Addr = addr
+	config.BindAddress = addr
+
+	// Set defaults for timeouts
+	if config.ReadTimeout == 0 {
+		config.ReadTimeout = 30 * time.Second
+	}
+	if config.WriteTimeout == 0 {
+		config.WriteTimeout = 30 * time.Second
+	}
+	if config.QueryTimeout == 0 {
+		config.QueryTimeout = 30 * time.Second
+	}
+	if config.MaxBodySize == 0 {
+		config.MaxBodySize = 25 * 1024 * 1024
+	}
+
+	executor := query.NewExecutor(engine, query.ExecutorConfig{
+		MaxSeriesPerQuery: 10000,
+		MaxPointsPerQuery: 1000000,
+		QueryTimeout:      config.QueryTimeout,
+	})
+
+	return NewServer(engine, executor, config), nil
 }
 
 // Stats holds server metrics
@@ -69,6 +112,9 @@ type Stats struct {
 
 // NewServer creates a new HTTP server
 func NewServer(engine *storage.Engine, executor *query.Executor, config Config) *Server {
+	// Initialize Prometheus metrics
+	metrics.Init()
+
 	s := &Server{
 		config:   config,
 		engine:   engine,
@@ -97,6 +143,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/write", s.handleWrite)
 	s.mux.HandleFunc("/query", s.handleQuery)
 	s.mux.HandleFunc("/debug/vars", s.handleDebugVars)
+	s.mux.Handle("/metrics", metrics.Handler())
 }
 
 // ServeHTTP implements http.Handler
@@ -127,8 +174,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
-	log.Printf("Starting HTTP server on %s", s.config.BindAddress)
+	log.Printf("Starting HTTP server on %s", s.config.Addr)
 	return s.server.ListenAndServe()
+}
+
+// ListenAndServe starts the HTTP server (alias for Start)
+func (s *Server) ListenAndServe() error {
+	return s.Start()
 }
 
 // StartTLS starts the HTTP server with TLS

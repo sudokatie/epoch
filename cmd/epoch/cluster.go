@@ -44,17 +44,45 @@ func runCluster(subcommand string, args []string) {
 		runClusterRemoveNode(args)
 	case "rebalance":
 		runClusterRebalance(args)
+	case "help", "-h", "--help":
+		printClusterHelp()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown cluster command: %s\n", subcommand)
+		printClusterHelp()
 		os.Exit(1)
 	}
 }
 
+func printClusterHelp() {
+	fmt.Fprintln(os.Stderr, "Usage: epoch cluster <subcommand> [options]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
+	fmt.Fprintln(os.Stderr, "  status      Show cluster status")
+	fmt.Fprintln(os.Stderr, "  add-node    Add a node to the cluster")
+	fmt.Fprintln(os.Stderr, "  remove-node Remove a node from the cluster")
+	fmt.Fprintln(os.Stderr, "  rebalance   Rebalance data across nodes")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Use 'epoch cluster <subcommand> --help' for more information.")
+}
+
 func runClusterStatus(args []string) {
-	fs := flag.NewFlagSet("cluster status", flag.ExitOnError)
+	fs := flag.NewFlagSet("cluster-status", flag.ContinueOnError)
 	host := fs.String("host", "localhost:8086", "Server host:port")
 	formatFlag := fs.String("format", "table", "Output format (table, json)")
-	fs.Parse(args)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: epoch cluster status [options]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Show cluster status including nodes, health, and data distribution.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return
+		}
+		os.Exit(1)
+	}
 
 	status, err := getClusterStatus(*host)
 	if err != nil {
@@ -73,11 +101,24 @@ func runClusterStatus(args []string) {
 }
 
 func runClusterAddNode(args []string) {
-	fs := flag.NewFlagSet("cluster add-node", flag.ExitOnError)
+	fs := flag.NewFlagSet("cluster-add-node", flag.ContinueOnError)
 	host := fs.String("host", "localhost:8086", "Server host:port")
 	nodeAddr := fs.String("addr", "", "Address of node to add (required)")
 	nodeID := fs.String("id", "", "Node ID (optional, auto-generated if empty)")
-	fs.Parse(args)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: epoch cluster add-node [options]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Add a new node to the cluster.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return
+		}
+		os.Exit(1)
+	}
 
 	if *nodeAddr == "" {
 		fmt.Fprintln(os.Stderr, "Error: --addr is required")
@@ -95,11 +136,24 @@ func runClusterAddNode(args []string) {
 }
 
 func runClusterRemoveNode(args []string) {
-	fs := flag.NewFlagSet("cluster remove-node", flag.ExitOnError)
+	fs := flag.NewFlagSet("cluster-remove-node", flag.ContinueOnError)
 	host := fs.String("host", "localhost:8086", "Server host:port")
 	nodeID := fs.String("id", "", "Node ID to remove (required)")
 	force := fs.Bool("force", false, "Force removal even if data loss may occur")
-	fs.Parse(args)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: epoch cluster remove-node [options]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Remove a node from the cluster.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return
+		}
+		os.Exit(1)
+	}
 
 	if *nodeID == "" {
 		fmt.Fprintln(os.Stderr, "Error: --id is required")
@@ -117,10 +171,23 @@ func runClusterRemoveNode(args []string) {
 }
 
 func runClusterRebalance(args []string) {
-	fs := flag.NewFlagSet("cluster rebalance", flag.ExitOnError)
+	fs := flag.NewFlagSet("cluster-rebalance", flag.ContinueOnError)
 	host := fs.String("host", "localhost:8086", "Server host:port")
 	dryRun := fs.Bool("dry-run", false, "Show what would be done without making changes")
-	fs.Parse(args)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: epoch cluster rebalance [options]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Rebalance data across cluster nodes.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return
+		}
+		os.Exit(1)
+	}
 
 	err := rebalanceCluster(*host, *dryRun)
 	if err != nil {

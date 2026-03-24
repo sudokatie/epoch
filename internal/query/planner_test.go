@@ -488,3 +488,163 @@ func TestIsAggregateFunc(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanNodeStrings(t *testing.T) {
+	// Test ScanNode String
+	scan := &ScanNode{
+		Measurement: "cpu",
+		TimeRange:   TimeRange{},
+		TagFilters:  map[string]string{"host": "server1"},
+	}
+	s := scan.String()
+	if !strings.Contains(s, "Scan") {
+		t.Errorf("ScanNode.String() = %q, should contain 'Scan'", s)
+	}
+
+	// Test FilterNode
+	filter := &FilterNode{
+		Input:     scan,
+		Predicate: &BooleanLiteral{Value: true},
+	}
+	fs := filter.String()
+	if !strings.Contains(fs, "Filter") {
+		t.Errorf("FilterNode.String() = %q, should contain 'Filter'", fs)
+	}
+
+	// Test GroupNode
+	group := &GroupNode{
+		Input: scan,
+		Tags:  []string{"host"},
+	}
+	gs := group.String()
+	if !strings.Contains(gs, "Group") {
+		t.Errorf("GroupNode.String() = %q, should contain 'Group'", gs)
+	}
+
+	// Test ProjectNode
+	project := &ProjectNode{
+		Input:  scan,
+		Fields: []string{"value"},
+	}
+	ps := project.String()
+	if !strings.Contains(ps, "Project") {
+		t.Errorf("ProjectNode.String() = %q, should contain 'Project'", ps)
+	}
+
+	// Test SortNode
+	sortNode := &SortNode{
+		Input: scan,
+		Field: "time",
+		Desc:  true,
+	}
+	ss := sortNode.String()
+	if !strings.Contains(ss, "Sort") {
+		t.Errorf("SortNode.String() = %q, should contain 'Sort'", ss)
+	}
+
+	// Test LimitNode
+	limit := &LimitNode{
+		Input:  scan,
+		Limit:  10,
+		Offset: 5,
+	}
+	ls := limit.String()
+	if !strings.Contains(ls, "Limit") {
+		t.Errorf("LimitNode.String() = %q, should contain 'Limit'", ls)
+	}
+}
+
+func TestExtractTimeConditionComplex(t *testing.T) {
+	planner := NewPlanner()
+
+	// Test with time > X AND time < Y
+	stmt, _ := ParseQuery("SELECT * FROM cpu WHERE time > now() - 1h AND time < now()")
+	selectStmt := stmt.(*SelectStatement)
+	
+	plan, err := planner.Plan(selectStmt)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	
+	_ = plan // Verify planning succeeds
+}
+
+func TestExtractAggregatesMultiple(t *testing.T) {
+	planner := NewPlanner()
+
+	stmt, _ := ParseQuery("SELECT mean(value), max(value), min(value) FROM cpu")
+	selectStmt := stmt.(*SelectStatement)
+	
+	plan, err := planner.Plan(selectStmt)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	
+	_ = plan
+}
+
+func TestPlanWithOrderBy(t *testing.T) {
+	planner := NewPlanner()
+
+	stmt, _ := ParseQuery("SELECT * FROM cpu ORDER BY time DESC")
+	selectStmt := stmt.(*SelectStatement)
+	
+	plan, err := planner.Plan(selectStmt)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	
+	_ = plan
+}
+
+func TestPlanWithLimitOffset(t *testing.T) {
+	planner := NewPlanner()
+
+	stmt, _ := ParseQuery("SELECT * FROM cpu LIMIT 10 OFFSET 5")
+	selectStmt := stmt.(*SelectStatement)
+	
+	plan, err := planner.Plan(selectStmt)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	
+	_ = plan
+}
+
+func TestPlannerOptimizations(t *testing.T) {
+	planner := NewPlanner()
+
+	// Test query that triggers pushdown
+	stmt, _ := ParseQuery("SELECT value FROM cpu WHERE host = 'server1' AND value > 10")
+	selectStmt := stmt.(*SelectStatement)
+	
+	plan, err := planner.Plan(selectStmt)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	_ = plan
+
+	// Test query with complex filters
+	stmt2, _ := ParseQuery("SELECT * FROM cpu WHERE (host = 'a' OR host = 'b') AND value > 0")
+	selectStmt2 := stmt2.(*SelectStatement)
+	
+	plan2, err := planner.Plan(selectStmt2)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	_ = plan2
+}
+
+func TestTimeExprRecognition(t *testing.T) {
+	planner := NewPlanner()
+
+	// Query with time expression
+	stmt, _ := ParseQuery("SELECT * FROM cpu WHERE time > now() - 1h")
+	selectStmt := stmt.(*SelectStatement)
+	
+	plan, err := planner.Plan(selectStmt)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	_ = plan
+}

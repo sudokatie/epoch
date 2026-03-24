@@ -162,13 +162,4 @@ func main() {
 	}
 }
 
-func runServer(bind, dataDir, configPath string) error {
-	fmt.Printf("Starting epoch server on %s (data: %s)\n", bind, dataDir)
-	if configPath != "" {
-		fmt.Printf("Using config: %s\n", configPath)
-	}
-	// TODO: implement server startup
-	// For now, just print and exit
-	fmt.Println("Server mode not yet fully implemented. Use the HTTP server package directly.")
-	return nil
-}
+// runServer is implemented in server.go

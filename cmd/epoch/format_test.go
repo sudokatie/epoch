@@ -311,3 +311,44 @@ func TestFormatCSVValue(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTimestampEdgeCases(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"invalid", true},
+		{"", true},
+		{"abc123", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := ParseTimestamp(tt.input, "ns")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseTimestamp(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseDurationEdgeCases(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"invalid", true},
+		{"", true},
+		{"10x", true},
+		{"-5m", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := ParseDuration(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseDuration(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}

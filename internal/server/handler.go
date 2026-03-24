@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sudokatie/epoch/internal/query"
+	"github.com/sudokatie/epoch/internal/storage"
 	"github.com/sudokatie/epoch/pkg/protocol"
 )
 
@@ -39,6 +41,19 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get precision parameter (default: ns)
+	precision := r.URL.Query().Get("precision")
+	if precision == "" {
+		precision = "ns"
+	}
+
+	// Validate precision
+	multiplier := getPrecisionMultiplier(precision)
+	if multiplier == 0 {
+		s.writeErrorf(w, http.StatusBadRequest, "invalid precision: %s (must be ns, us, ms, or s)", precision)
+		return
+	}
+
 	// Check database exists, create if requested
 	if _, ok := s.engine.GetDatabase(database); !ok {
 		// Try to create if it doesn't exist
@@ -60,16 +75,37 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse line protocol
-	points, err := protocol.ParseLineProtocol(string(body))
-	if err != nil {
-		s.writeErrorf(w, http.StatusBadRequest, "failed to parse line protocol: %v", err)
-		return
+	// Detect format from Content-Type header
+	contentType := r.Header.Get("Content-Type")
+	var points []*storage.DataPoint
+	var parseErr error
+
+	if strings.Contains(contentType, "application/json") {
+		// Parse JSON format
+		points, parseErr = protocol.ParseJSON(body)
+		if parseErr != nil {
+			s.writeErrorf(w, http.StatusBadRequest, "failed to parse JSON: %v", parseErr)
+			return
+		}
+	} else {
+		// Default to line protocol (text/plain or unspecified)
+		points, parseErr = protocol.ParseLineProtocol(string(body))
+		if parseErr != nil {
+			s.writeErrorf(w, http.StatusBadRequest, "failed to parse line protocol: %v", parseErr)
+			return
+		}
 	}
 
 	if len(points) == 0 {
 		s.writeError(w, http.StatusBadRequest, "no valid points in request")
 		return
+	}
+
+	// Convert timestamps based on precision
+	if multiplier != 1 {
+		for _, p := range points {
+			p.Timestamp *= multiplier
+		}
 	}
 
 	// Write to engine
@@ -353,5 +389,22 @@ func formatCSVValue(v interface{}) string {
 		return ""
 	default:
 		return ""
+	}
+}
+
+// getPrecisionMultiplier returns the multiplier to convert to nanoseconds
+// Returns 0 for invalid precision values
+func getPrecisionMultiplier(precision string) int64 {
+	switch precision {
+	case "ns", "n":
+		return 1
+	case "us", "u", "µ":
+		return 1000
+	case "ms":
+		return 1000000
+	case "s":
+		return 1000000000
+	default:
+		return 0
 	}
 }

@@ -274,9 +274,9 @@ func TestRaftStateSnapshotRestore(t *testing.T) {
 	}
 }
 
-func TestRaftConsensus(t *testing.T) {
+func TestSimpleRaftConsensus(t *testing.T) {
 	state := NewRaftState()
-	consensus := NewRaftConsensus(state)
+	consensus := NewSimpleRaftConsensus(state)
 
 	// Not leader initially
 	if consensus.IsLeader() {
@@ -314,7 +314,7 @@ func TestRaftConsensus(t *testing.T) {
 
 func TestRaftConsensusSnapshot(t *testing.T) {
 	state := NewRaftState()
-	consensus := NewRaftConsensus(state)
+	consensus := NewSimpleRaftConsensus(state)
 	consensus.BecomeLeader("node1")
 
 	// Add data
@@ -329,7 +329,7 @@ func TestRaftConsensusSnapshot(t *testing.T) {
 
 	// Restore
 	state2 := NewRaftState()
-	consensus2 := NewRaftConsensus(state2)
+	consensus2 := NewSimpleRaftConsensus(state2)
 
 	if err := consensus2.Restore(&buf); err != nil {
 		t.Fatalf("restore error: %v", err)
@@ -342,7 +342,7 @@ func TestRaftConsensusSnapshot(t *testing.T) {
 
 func TestRaftConsensusLeaderChange(t *testing.T) {
 	state := NewRaftState()
-	consensus := NewRaftConsensus(state)
+	consensus := NewSimpleRaftConsensus(state)
 
 	var leaderChanges []bool
 	consensus.OnLeaderChange(func(isLeader bool) {

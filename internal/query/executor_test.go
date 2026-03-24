@@ -441,3 +441,79 @@ func TestSeriesResult(t *testing.T) {
 		t.Error("values not set")
 	}
 }
+
+func TestEvaluateBinaryOpComparisons(t *testing.T) {
+	row := []interface{}{10.0, 5.0}
+	colIndex := map[string]int{"a": 0, "b": 1}
+	
+	tests := []struct {
+		name string
+		op   Token
+		want interface{}
+	}{
+		{"less than", LT, false},
+		{"greater than", GT, true},
+		{"less or equal", LTE, false},
+		{"greater or equal", GTE, true},
+		{"equal", EQ, false},
+		{"not equal", NEQ, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr := &BinaryExpr{
+				Left:  &Identifier{Name: "a"},
+				Op:    tt.op,
+				Right: &Identifier{Name: "b"},
+			}
+			result := evaluateExpr(expr, row, colIndex)
+			if result != tt.want {
+				t.Errorf("evaluateExpr with %s = %v, want %v", tt.name, result, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvaluateExprLiterals(t *testing.T) {
+	row := []interface{}{}
+	colIndex := map[string]int{}
+
+	// Test string literal
+	strLit := &StringLiteral{Value: "hello"}
+	if v := evaluateExpr(strLit, row, colIndex); v != "hello" {
+		t.Errorf("StringLiteral = %v, want 'hello'", v)
+	}
+
+	// Test number literal
+	numLit := &NumberLiteral{Value: 42}
+	if v := evaluateExpr(numLit, row, colIndex); v != 42.0 {
+		t.Errorf("NumberLiteral = %v, want 42", v)
+	}
+
+	// Test boolean literal
+	boolLit := &BooleanLiteral{Value: true}
+	if v := evaluateExpr(boolLit, row, colIndex); v != true {
+		t.Errorf("BooleanLiteral = %v, want true", v)
+	}
+}
+
+func TestEvaluateExprParen(t *testing.T) {
+	row := []interface{}{42.0}
+	colIndex := map[string]int{"value": 0}
+
+	paren := &ParenExpr{Expr: &Identifier{Name: "value"}}
+	if v := evaluateExpr(paren, row, colIndex); v != 42.0 {
+		t.Errorf("ParenExpr = %v, want 42", v)
+	}
+}
+
+func TestEvaluateExprUnknown(t *testing.T) {
+	row := []interface{}{}
+	colIndex := map[string]int{}
+
+	// An unknown expression type should return nil
+	unknown := &NowExpr{}
+	if v := evaluateExpr(unknown, row, colIndex); v != nil {
+		t.Errorf("Unknown expr = %v, want nil", v)
+	}
+}
