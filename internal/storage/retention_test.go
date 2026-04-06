@@ -528,3 +528,208 @@ func TestRetentionManagerStartStop(t *testing.T) {
 		t.Fatal("StopEnforcement timed out")
 	}
 }
+
+func TestDownsampleConfigValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *RetentionDownsampleConfig
+		wantErr bool
+	}{
+		{
+			name:    "nil config (disabled)",
+			config:  nil,
+			wantErr: false,
+		},
+		{
+			name: "valid config",
+			config: &RetentionDownsampleConfig{
+				Enabled:               true,
+				DestMeasurementSuffix: "_hourly",
+				AggregateFuncs:        []string{"mean", "min", "max"},
+				GroupByInterval:       time.Hour,
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty suffix",
+			config: &RetentionDownsampleConfig{
+				Enabled:               true,
+				DestMeasurementSuffix: "",
+				AggregateFuncs:        []string{"mean"},
+				GroupByInterval:       time.Hour,
+			},
+			wantErr: true,
+		},
+		{
+			name: "no aggregate funcs",
+			config: &RetentionDownsampleConfig{
+				Enabled:               true,
+				DestMeasurementSuffix: "_hourly",
+				AggregateFuncs:        []string{},
+				GroupByInterval:       time.Hour,
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid aggregate func",
+			config: &RetentionDownsampleConfig{
+				Enabled:               true,
+				DestMeasurementSuffix: "_hourly",
+				AggregateFuncs:        []string{"mean", "invalid_func"},
+				GroupByInterval:       time.Hour,
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero interval",
+			config: &RetentionDownsampleConfig{
+				Enabled:               true,
+				DestMeasurementSuffix: "_hourly",
+				AggregateFuncs:        []string{"mean"},
+				GroupByInterval:       0,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := &RetentionPolicy{
+				Name:       "test",
+				Duration:   24 * time.Hour,
+				Downsample: tt.config,
+			}
+
+			err := validatePolicy(policy)
+			if tt.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCalculateAggregateRetention(t *testing.T) {
+	values := []float64{1.0, 2.0, 3.0, 4.0, 5.0}
+
+	tests := []struct {
+		fn   string
+		want float64
+	}{
+		{"mean", 3.0},
+		{"avg", 3.0},
+		{"sum", 15.0},
+		{"count", 5.0},
+		{"min", 1.0},
+		{"max", 5.0},
+		{"unknown", 3.0}, // defaults to mean
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.fn, func(t *testing.T) {
+			got := calculateAggregateRetention(tt.fn, values)
+			if got != tt.want {
+				t.Errorf("calculateAggregateRetention(%q, values) = %v, want %v", tt.fn, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCalculateAggregateRetentionEmpty(t *testing.T) {
+	got := calculateAggregateRetention("mean", []float64{})
+	if got != 0 {
+		t.Errorf("got %v, want 0 for empty input", got)
+	}
+}
+
+func TestCreatePolicyWithDownsample(t *testing.T) {
+	rm, cleanup := setupRetentionManager(t)
+	defer cleanup()
+
+	policy := &RetentionPolicy{
+		Name:     "with_downsample",
+		Duration: 24 * time.Hour,
+		Downsample: &RetentionDownsampleConfig{
+			Enabled:               true,
+			DestMeasurementSuffix: "_hourly",
+			AggregateFuncs:        []string{"mean", "min", "max"},
+			GroupByInterval:       time.Hour,
+		},
+	}
+
+	if err := rm.CreatePolicy(policy); err != nil {
+		t.Fatalf("failed to create policy: %v", err)
+	}
+
+	// Verify it was saved with downsample config
+	got, ok := rm.GetPolicy("with_downsample")
+	if !ok {
+		t.Fatal("policy not found")
+	}
+
+	if got.Downsample == nil {
+		t.Fatal("downsample config not saved")
+	}
+
+	if !got.Downsample.Enabled {
+		t.Error("downsample should be enabled")
+	}
+
+	if got.Downsample.DestMeasurementSuffix != "_hourly" {
+		t.Errorf("got suffix %q, want _hourly", got.Downsample.DestMeasurementSuffix)
+	}
+
+	if len(got.Downsample.AggregateFuncs) != 3 {
+		t.Errorf("got %d aggregate funcs, want 3", len(got.Downsample.AggregateFuncs))
+	}
+}
+
+func TestEnforceWithResult(t *testing.T) {
+	rm, cleanup := setupRetentionManager(t)
+	defer cleanup()
+
+	// Create policy with finite retention
+	policy := &RetentionPolicy{
+		Name:     "short",
+		Duration: time.Hour,
+		Default:  true,
+	}
+	rm.CreatePolicy(policy)
+
+	// Enforce should return result struct
+	result := rm.EnforceWithResult()
+
+	// With no shards, nothing to drop or downsample
+	if result.Dropped != 0 {
+		t.Errorf("got %d dropped, want 0", result.Dropped)
+	}
+	if result.DownsampledShards != 0 {
+		t.Errorf("got %d downsampled shards, want 0", result.DownsampledShards)
+	}
+}
+
+func TestDownsampledShardsTracking(t *testing.T) {
+	rm, cleanup := setupRetentionManager(t)
+	defer cleanup()
+
+	// Verify tracking map is initialized
+	if rm.downsampledShards == nil {
+		t.Fatal("downsampledShards map should be initialized")
+	}
+
+	// Track a shard
+	rm.mu.Lock()
+	rm.downsampledShards[1] = true
+	rm.mu.Unlock()
+
+	// Verify it's tracked
+	rm.mu.RLock()
+	tracked := rm.downsampledShards[1]
+	rm.mu.RUnlock()
+
+	if !tracked {
+		t.Error("shard 1 should be tracked as downsampled")
+	}
+}

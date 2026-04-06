@@ -159,13 +159,31 @@ type Database struct {
 	DefaultRP         string
 }
 
+// RetentionDownsampleConfig defines automatic downsampling before data expires
+type RetentionDownsampleConfig struct {
+	// Enabled turns on automatic downsampling before deletion
+	Enabled bool `json:"enabled"`
+	// DestMeasurementSuffix is appended to source measurement for downsampled data
+	// e.g., "cpu" -> "cpu_hourly"
+	DestMeasurementSuffix string `json:"dest_measurement_suffix"`
+	// DestRetentionPolicy is the policy to write downsampled data to
+	// If empty, uses the same database's default policy
+	DestRetentionPolicy string `json:"dest_retention_policy,omitempty"`
+	// AggregateFuncs lists aggregation functions to apply (mean, min, max, sum, count)
+	// Each creates a separate field: fieldname_mean, fieldname_min, etc.
+	AggregateFuncs []string `json:"aggregate_funcs"`
+	// GroupByInterval is the time bucket size for aggregation
+	GroupByInterval time.Duration `json:"group_by_interval"`
+}
+
 // RetentionPolicy defines data retention settings
 type RetentionPolicy struct {
-	Name            string
-	Duration        time.Duration
-	ShardDuration   time.Duration
-	ReplicationFactor int
-	Default         bool
+	Name              string                     `json:"name"`
+	Duration          time.Duration              `json:"duration"`
+	ShardDuration     time.Duration              `json:"shard_duration"`
+	ReplicationFactor int                        `json:"replication_factor"`
+	Default           bool                       `json:"default"`
+	Downsample        *RetentionDownsampleConfig `json:"downsample,omitempty"`
 }
 
 // WriteRequest represents a batch write request
